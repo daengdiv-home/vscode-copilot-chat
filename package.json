@@ -5822,7 +5822,10 @@
 		"package": "vsce package",
 		"web": "vscode-test-web --headless --extensionDevelopmentPath=. .",
 		"test:prompt": "mocha \"src/extension/completions-core/vscode-node/prompt/**/test/**/*.test.{ts,tsx}\"",
-		"test:completions-core": "tsx src/extension/completions-core/vscode-node/extension/test/runTest.ts"
+		"test:completions-core": "tsx src/extension/completions-core/vscode-node/extension/test/runTest.ts",
+		"proxy": "tsx proxy-server.ts",
+		"proxy:build": "npx esbuild proxy-server.ts --bundle --platform=node --target=node22 --outfile=dist/proxy-server.js --external:express --format=cjs",
+		"proxy:start": "node dist/proxy-server.js"
 	},
 	"devDependencies": {
 		"@azure/identity": "4.9.1",
