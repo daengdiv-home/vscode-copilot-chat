@@ -453,6 +453,68 @@ export async function fetchMessagesApi(
 }
 
 /**
+ * Forward a raw Anthropic Messages API request to CAPI, preserving client
+ * Anthropic headers (anthropic-version, anthropic-beta, etc.).
+ *
+ * This is designed for full Anthropic SDK compatibility: the request body
+ * is forwarded as-is, headers are merged, and the response is returned
+ * unmodified so the route can pipe it directly to the client.
+ */
+export async function fetchMessagesApiNative(
+	capiUrl: string,
+	copilotToken: string,
+	body: Record<string, any>,
+	clientHeaders?: {
+		anthropicVersion?: string;
+		anthropicBeta?: string;
+	},
+	signal?: AbortSignal,
+): Promise<globalThis.Response> {
+	const requestId = generateUuid();
+	const isStream = body.stream ?? false;
+
+	const headers: Record<string, string> = {
+		'Authorization': `Bearer ${copilotToken}`,
+		'Content-Type': 'application/json',
+		'Accept': isStream ? 'text/event-stream' : 'application/json',
+		'X-Request-Id': requestId,
+		'X-GitHub-Api-Version': '2025-05-01',
+		'VScode-SessionId': generateUuid(),
+		'VScode-MachineId': generateUuid(),
+		'Editor-Version': 'vscode/1.100.0',
+		'Editor-Plugin-Version': 'copilot-chat/0.38.0',
+		'Copilot-Integration-Id': 'vscode-chat',
+		'OpenAI-Intent': 'conversation-panel',
+		'User-Agent': 'GitHubCopilotChat/0.38.0',
+		'X-Initiator': 'agent',
+	};
+
+	// NOTE: Do NOT forward anthropic-version header to CAPI.
+	// CAPI hangs/times out when this header is present. The Anthropic SDK
+	// always sends it, but CAPI handles versioning internally.
+
+	// Merge anthropic-beta: always include interleaved-thinking, plus any client betas
+	const betaFeatures = new Set<string>();
+	betaFeatures.add('interleaved-thinking-2025-05-14');
+	if (clientHeaders?.anthropicBeta) {
+		for (const beta of clientHeaders.anthropicBeta.split(',')) {
+			const trimmed = beta.trim();
+			if (trimmed) { betaFeatures.add(trimmed); }
+		}
+	}
+	headers['anthropic-beta'] = [...betaFeatures].join(',');
+
+	const response = await fetch(`${capiUrl}/v1/messages`, {
+		method: 'POST',
+		headers,
+		body: JSON.stringify(body),
+		signal,
+	});
+
+	return response;
+}
+
+/**
  * Convert a non-streaming Messages API response to OpenAI chat completions format.
  * Extracts thinking blocks and text blocks into a structured response.
  */

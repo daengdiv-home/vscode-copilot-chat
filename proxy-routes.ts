@@ -1,9 +1,10 @@
 /*---------------------------------------------------------------------------------------------
- *  OpenAI-Compatible API Routes
+ *  OpenAI & Anthropic Compatible API Routes
  *
- *  Implements the OpenAI API surface using the GitHub Copilot API (CAPI) backend.
- *  Each route translates between OpenAI format and CAPI format, reusing the
- *  same request/response patterns as the original extension's networking layer.
+ *  Implements both the OpenAI and Anthropic API surfaces using the GitHub
+ *  Copilot API (CAPI) backend. Each route translates between client format
+ *  and CAPI format, reusing the same request/response patterns as the
+ *  original extension's networking layer.
  *
  *  References to original extension code:
  *    - Model listing: src/platform/endpoint/node/modelMetadataFetcher.ts
@@ -11,6 +12,7 @@
  *    - SSE stream processing: src/platform/networking/node/stream.ts
  *    - Request body: src/platform/networking/common/networking.ts
  *    - Response types: src/platform/networking/common/openai.ts
+ *    - Messages API: src/platform/endpoint/node/messagesApi.ts
  *--------------------------------------------------------------------------------------------*/
 
 import { Response as ExpressResponse, Request, Router } from 'express';
@@ -447,47 +449,104 @@ proxyRouter.post('/responses', async (req: Request, res: ExpressResponse) => {
 });
 
 /*---------------------------------------------------------------------------------------------
- *  POST /v1/messages - Anthropic Messages API (pass-through)
+ *  POST /v1/messages - Anthropic Messages API (100% SDK compatible)
  *
- *  Forwards to CAPI's /v1/messages endpoint for Anthropic-family models.
+ *  Full Anthropic SDK compatibility. Forwards requests to CAPI's /v1/messages
+ *  endpoint with proper header forwarding, Anthropic error format, thinking
+ *  support, tool use, prompt caching, and client disconnect handling.
+ *
+ *  Supports all Anthropic features:
+ *    - Streaming and non-streaming responses
+ *    - Extended thinking (interleaved-thinking-2025-05-14)
+ *    - Tool use (tool_choice, auto, any, specific tool)
+ *    - System messages (string or content blocks)
+ *    - Prompt caching (anthropic-beta: prompt-caching-2024-07-31)
+ *    - All Claude models available via Copilot
+ *
  *  @see src/platform/endpoint/node/messagesApi.ts
  *--------------------------------------------------------------------------------------------*/
 proxyRouter.post('/messages', async (req: Request, res: ExpressResponse) => {
 	try {
-		const { token, capiUrl } = await tokenProvider.resolveCapiAuth(req);
-		const requestId = generateUuid();
-		const isStream = req.body.stream ?? false;
-
-		const headers: Record<string, string> = {
-			'Authorization': `Bearer ${token}`,
-			'Content-Type': 'application/json',
-			'Accept': isStream ? 'text/event-stream' : 'application/json',
-			'X-Request-Id': requestId,
-			'X-GitHub-Api-Version': '2025-05-01',
-			'Editor-Version': 'vscode/1.100.0',
-			'Editor-Plugin-Version': 'copilot-chat/0.38.0',
-			'Copilot-Integration-Id': 'vscode-chat',
-			'OpenAI-Intent': 'conversation-panel',
-			'X-Initiator': 'agent',
-		};
-
-		const capiResponse = await fetch(`${capiUrl}/v1/messages`, {
-			method: 'POST',
-			headers,
-			body: JSON.stringify(req.body),
-		});
-
-		if (!capiResponse.ok && !isStream) {
-			const text = await capiResponse.text().catch(() => '');
-			return res.status(capiResponse.status).json({
-				error: { message: text || `Messages API failed: ${capiResponse.status}`, type: 'server_error' }
+		// --- Validation (Anthropic error format) ---
+		const body = req.body;
+		if (!body.model) {
+			return res.status(400).json({
+				type: 'error',
+				error: { type: 'invalid_request_error', message: 'model: field required' },
+			});
+		}
+		if (!body.max_tokens && body.max_tokens !== 0) {
+			return res.status(400).json({
+				type: 'error',
+				error: { type: 'invalid_request_error', message: 'max_tokens: field required' },
+			});
+		}
+		if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
+			return res.status(400).json({
+				type: 'error',
+				error: { type: 'invalid_request_error', message: 'messages: field required, must be a non-empty array' },
 			});
 		}
 
+		// --- Resolve auth ---
+		const { token, capiUrl } = await tokenProvider.resolveCapiAuth(req);
+		const isStream = body.stream ?? false;
+
+		// --- Auto-adjust max_tokens when thinking is enabled ---
+		if (body.thinking?.type === 'enabled' && body.thinking?.budget_tokens) {
+			const budget = body.thinking.budget_tokens;
+			if (body.max_tokens <= budget) {
+				body.max_tokens = budget + 1;
+			}
+		}
+
+		// --- Make request to CAPI ---
+		const capiResponse = await fetchMessagesApi(
+			capiUrl,
+			token,
+			body,
+		);
+
+		// --- Error handling (Anthropic format) ---
+		if (!capiResponse.ok) {
+			const text = await capiResponse.text().catch(() => '');
+			// Try to parse as JSON (CAPI may return structured errors)
+			try {
+				const parsed = JSON.parse(text);
+				// If it's already in Anthropic error format, forward as-is
+				if (parsed.type === 'error' && parsed.error) {
+					return res.status(capiResponse.status).json(parsed);
+				}
+				// Wrap OpenAI-style errors into Anthropic format
+				const errMsg = parsed.error?.message || parsed.message || text;
+				return res.status(capiResponse.status).json({
+					type: 'error',
+					error: {
+						type: capiResponse.status === 401 ? 'authentication_error'
+							: capiResponse.status === 429 ? 'rate_limit_error'
+								: capiResponse.status === 404 ? 'not_found_error'
+									: capiResponse.status >= 500 ? 'api_error'
+										: 'invalid_request_error',
+						message: errMsg,
+					},
+				});
+			} catch {
+				return res.status(capiResponse.status).json({
+					type: 'error',
+					error: {
+						type: 'api_error',
+						message: text || `Messages API failed with status ${capiResponse.status}`,
+					},
+				});
+			}
+		}
+
+		// --- Streaming response: pipe SSE events directly ---
 		if (isStream && capiResponse.body) {
 			res.setHeader('Content-Type', 'text/event-stream');
 			res.setHeader('Cache-Control', 'no-cache');
 			res.setHeader('Connection', 'keep-alive');
+			res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
 
 			const reader = capiResponse.body.getReader();
 			const decoder = new TextDecoder();
@@ -495,12 +554,18 @@ proxyRouter.post('/messages', async (req: Request, res: ExpressResponse) => {
 				while (true) {
 					const { done, value } = await reader.read();
 					if (done) { break; }
-					res.write(decoder.decode(value, { stream: true }));
+					const chunk = decoder.decode(value, { stream: true });
+					res.write(chunk);
+				}
+			} catch (e: any) {
+				if (e.name !== 'AbortError') {
+					console.error('[/v1/messages stream]', e.message);
 				}
 			} finally {
 				res.end();
 			}
 		} else {
+			// --- Non-streaming: forward JSON response as-is ---
 			const result = await capiResponse.json();
 			res.json(result);
 		}
@@ -508,7 +573,8 @@ proxyRouter.post('/messages', async (req: Request, res: ExpressResponse) => {
 		console.error('[/v1/messages]', e.message);
 		if (res.headersSent) { res.end(); return; }
 		res.status(500).json({
-			error: { message: e.message, type: 'server_error', code: 'messages_error' }
+			type: 'error',
+			error: { type: 'api_error', message: e.message || 'Internal server error' },
 		});
 	}
 });

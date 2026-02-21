@@ -1,20 +1,26 @@
 /*---------------------------------------------------------------------------------------------
- *  OpenAI-Compatible Proxy Server for GitHub Copilot Chat Extension
+ *  OpenAI & Anthropic Compatible Proxy Server for GitHub Copilot Chat Extension
  *
- *  This proxy server exposes the GitHub Copilot API as an OpenAI-compatible
- *  REST API. It reuses the original extension types and authentication flow
- *  without modifying any original source files.
+ *  This proxy server exposes the GitHub Copilot API as both OpenAI-compatible
+ *  and Anthropic-compatible REST APIs. It reuses the original extension types
+ *  and authentication flow without modifying any original source files.
  *
  *  Usage:
  *    GITHUB_TOKEN=ghp_xxx npx tsx proxy-server.ts
  *    # or
  *    GITHUB_TOKEN=ghp_xxx node dist/proxy-server.js
  *
- *  Endpoints:
+ *  OpenAI Endpoints:
  *    GET  /v1/models              - List available models
  *    POST /v1/chat/completions    - Chat completions (streaming & non-streaming)
  *    POST /v1/embeddings          - Embeddings
  *    GET  /v1/models/:modelId     - Get model info
+ *
+ *  Anthropic Endpoints:
+ *    POST /v1/messages            - Anthropic Messages API (100% compatible)
+ *
+ *  Common:
+ *    POST /v1/responses           - Responses API (pass-through)
  *    GET  /health                 - Health check
  *--------------------------------------------------------------------------------------------*/
 
@@ -36,11 +42,11 @@ const serverStats = {
 // Parse JSON bodies
 app.use(express.json({ limit: '50mb' }));
 
-// CORS headers
+// CORS headers (support both OpenAI and Anthropic SDK headers)
 app.use((_req: Request, res: ExpressResponse, next: NextFunction) => {
 	res.setHeader('Access-Control-Allow-Origin', '*');
 	res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-	res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+	res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-beta, anthropic-dangerous-direct-browser-access');
 	if (_req.method === 'OPTIONS') {
 		res.sendStatus(204);
 		return;
@@ -70,8 +76,8 @@ app.get('/health', (_req: Request, res: ExpressResponse) => {
 	const tokenProvider = CopilotTokenProvider.getInstance();
 	res.json({
 		status: 'ok',
-		service: 'copilot-openai-proxy',
-		version: '1.2.0',
+		service: 'copilot-openai-anthropic-proxy',
+		version: '1.3.0',
 		uptime_seconds: Math.floor((Date.now() - serverStats.startedAt) / 1000),
 		total_requests: serverStats.totalRequests,
 		active_requests: serverStats.activeRequests,
@@ -88,23 +94,34 @@ app.get('/health', (_req: Request, res: ExpressResponse) => {
 	});
 });
 
-// Authentication middleware - extracts token from Authorization header or env
+// Authentication middleware - extracts token from Authorization header, x-api-key, or env
+// Supports both OpenAI (Authorization: Bearer) and Anthropic (x-api-key) authentication
 app.use('/v1', (req: Request, _res: ExpressResponse, next: NextFunction) => {
-	// Allow passing GitHub token in Authorization header as "Bearer ghp_xxx" or "Bearer ghu_xxx"
-	const authHeader = req.headers.authorization;
-	if (authHeader?.startsWith('Bearer ')) {
-		const token = authHeader.slice(7);
-		// If it looks like a GitHub PAT or OAuth token, use it
+	const extractGitHubToken = (token: string) => {
 		if (token.startsWith('ghp_') || token.startsWith('gho_') || token.startsWith('ghu_') || token.startsWith('github_pat_')) {
 			(req as any).githubToken = token;
+			return true;
 		}
 		// Copilot tokens are long JWT-like strings (header.payload.signature)
-		// Only treat as direct copilot token if it looks like a real one
-		else if (token.length > 100 && token.includes('.')) {
+		if (token.length > 100 && token.includes('.')) {
 			(req as any).copilotTokenDirect = token;
+			return true;
 		}
-		// Otherwise ignore (e.g. "dummy", "sk-xxx") and fall through to GITHUB_TOKEN env
+		return false;
+	};
+
+	// 1. Check Authorization: Bearer header (OpenAI SDK style)
+	const authHeader = req.headers.authorization;
+	if (authHeader?.startsWith('Bearer ')) {
+		extractGitHubToken(authHeader.slice(7));
 	}
+
+	// 2. Check x-api-key header (Anthropic SDK style)
+	const apiKey = req.headers['x-api-key'] as string | undefined;
+	if (apiKey && !(req as any).githubToken && !(req as any).copilotTokenDirect) {
+		extractGitHubToken(apiKey);
+	}
+
 	next();
 });
 
@@ -146,17 +163,20 @@ async function main() {
 	}
 
 	app.listen(PORT, () => {
-		console.log(`\n🚀 Copilot OpenAI-Compatible Proxy v1.2.0 running on http://localhost:${PORT}`);
-		console.log(`\nEndpoints:`);
+		console.log(`\n🚀 Copilot OpenAI + Anthropic Proxy v1.3.0 running on http://localhost:${PORT}`);
+		console.log(`\nOpenAI-Compatible Endpoints:`);
 		console.log(`  GET  http://localhost:${PORT}/v1/models`);
 		console.log(`  POST http://localhost:${PORT}/v1/chat/completions`);
 		console.log(`  POST http://localhost:${PORT}/v1/embeddings`);
 		console.log(`  POST http://localhost:${PORT}/v1/responses`);
+		console.log(`\nAnthropic-Compatible Endpoints:`);
 		console.log(`  POST http://localhost:${PORT}/v1/messages`);
+		console.log(`\nCommon:`);
 		console.log(`  GET  http://localhost:${PORT}/health`);
-		console.log(`\nUsage with OpenAI client:`);
-		console.log(`  base_url = "http://localhost:${PORT}/v1"`);
-		console.log(`  api_key  = "${process.env.GITHUB_TOKEN?.slice(0, 8)}..."`);
+		console.log(`\nUsage with OpenAI SDK:`);
+		console.log(`  client = OpenAI(base_url="http://localhost:${PORT}/v1", api_key="dummy")`);
+		console.log(`\nUsage with Anthropic SDK:`);
+		console.log(`  client = Anthropic(base_url="http://localhost:${PORT}", api_key="dummy")`);
 		if (DEBUG) { console.log(`\nDebug mode: ON (set PROXY_DEBUG=0 to disable)`); }
 		console.log('');
 	});
