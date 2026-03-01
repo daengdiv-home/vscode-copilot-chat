@@ -1,4 +1,9 @@
 /*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*---------------------------------------------------------------------------------------------
  *  CAPI Client - Direct HTTP client for the GitHub Copilot API
  *
  *  This module provides direct HTTP communication with the CAPI endpoints,
@@ -8,6 +13,19 @@
  *  Imports types from the original source to ensure compatibility.
  *--------------------------------------------------------------------------------------------*/
 
+
+/**
+ * Extension package.json - used to derive version headers dynamically.
+ * @see src/platform/env/common/packagejson.ts
+ * @see src/platform/env/vscode/envServiceImpl.ts
+ */
+const packageJson: { name: string; version: string; engines: { vscode: string } } = require('./package.json');
+
+/** Derived version constants (mirrors IEnvService.getEditorInfo / getEditorPluginInfo) */
+const EDITOR_NAME = 'vscode';
+const EDITOR_VERSION = packageJson.engines.vscode.replace(/^[^0-9]*/, ''); // strip leading ^ or ~
+const PLUGIN_NAME = packageJson.name;       // "copilot-chat"
+const PLUGIN_VERSION = packageJson.version;  // e.g. "0.38.0"
 
 /**
  * Model API response type - mirrors IModelAPIResponse from the extension.
@@ -59,7 +77,11 @@ function generateUuid(): string {
 	});
 }
 
-/** Standard headers for CAPI requests */
+/** Standard headers for CAPI requests
+ * @see src/platform/networking/common/networking.ts - networkRequest headers
+ * @see src/platform/networking/node/nodeFetcher.ts - User-Agent
+ * @see src/platform/env/common/envService.ts - getEditorVersionHeaders
+ */
 function getCapiHeaders(copilotToken: string, requestId: string): Record<string, string> {
 	return {
 		'Authorization': `Bearer ${copilotToken}`,
@@ -69,11 +91,11 @@ function getCapiHeaders(copilotToken: string, requestId: string): Record<string,
 		'X-GitHub-Api-Version': '2025-05-01',
 		'VScode-SessionId': generateUuid(),
 		'VScode-MachineId': generateUuid(),
-		'Editor-Version': 'vscode/1.100.0',
-		'Editor-Plugin-Version': 'copilot-chat/0.38.0',
+		'Editor-Version': `${EDITOR_NAME}/${EDITOR_VERSION}`,
+		'Editor-Plugin-Version': `${PLUGIN_NAME}/${PLUGIN_VERSION}`,
 		'Copilot-Integration-Id': 'vscode-chat',
 		'OpenAI-Intent': 'conversation-panel',
-		'User-Agent': 'GitHubCopilotChat/0.38.0',
+		'User-Agent': `GitHubCopilotChat/${PLUGIN_VERSION}`,
 		'X-Initiator': 'agent',
 	};
 }
