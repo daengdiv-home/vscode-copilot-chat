@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import type { SessionOptions } from '@github/copilot/sdk';
+import type { PermissionRequestedEvent } from '@github/copilot/sdk';
+import { platform } from 'node:os';
 import type { CancellationToken, ChatParticipantToolToken } from 'vscode';
 import { IWorkspaceService } from '../../../../platform/workspace/common/workspaceService';
 import { extUriBiasedIgnorePathCase } from '../../../../util/vs/base/common/resources';
@@ -13,7 +14,7 @@ import { LanguageModelTextPart } from '../../../../vscodeTypes';
 import { ToolName } from '../../../tools/common/toolNames';
 import { IToolsService } from '../../../tools/common/toolsService';
 import { createEditConfirmation, formatDiffAsUnified } from '../../../tools/node/editFileToolUtils';
-import { getAffectedUrisForEditTool, ToolCall } from '../common/copilotCLITools';
+import { getAffectedUrisForEditTool, getCdPresentationOverrides, ToolCall } from '../common/copilotCLITools';
 
 type CoreTerminalConfirmationToolParams = {
 	tool: ToolName.CoreTerminalConfirmationTool;
@@ -40,6 +41,7 @@ export async function requestPermission(
 	workingDirectory: URI | undefined,
 	toolsService: IToolsService,
 	toolInvocationToken: ChatParticipantToolToken,
+	toolParentCallId: string | undefined,
 	token: CancellationToken,
 ): Promise<boolean> {
 
@@ -48,7 +50,7 @@ export async function requestPermission(
 		return true;
 	}
 	const { tool, input } = toolParams;
-	const result = await toolsService.invokeTool(tool, { input, toolInvocationToken }, token);
+	const result = await toolsService.invokeTool(tool, { input, toolInvocationToken, subAgentInvocationId: toolParentCallId }, token);
 
 	const firstResultPart = result.content.at(0);
 	return (firstResultPart instanceof LanguageModelTextPart && firstResultPart.value === 'yes');
@@ -136,13 +138,18 @@ export function getFileBeingEdited(permissionRequest: PermissionRequest, toolCal
  * Pure function mapping a Copilot CLI permission request -> tool invocation params.
  * Keeps logic out of session class for easier unit testing.
  */
-export async function getConfirmationToolParams(instaService: IInstantiationService, permissionRequest: PermissionRequest, toolCall?: ToolCall, workingDirectory?: URI): Promise<CoreTerminalConfirmationToolParams | CoreConfirmationToolParams | undefined> {
+export async function getConfirmationToolParams(instaService: IInstantiationService, permissionRequest: PermissionRequest, toolCall?: ToolCall, workingDirectory?: URI, isWindows?: boolean): Promise<CoreTerminalConfirmationToolParams | CoreConfirmationToolParams | undefined> {
 	if (permissionRequest.kind === 'shell') {
+		isWindows = typeof isWindows === 'boolean' ? isWindows : platform() === 'win32';
+		const isPowershell = isWindows;
+		const fullCommandText = permissionRequest.fullCommandText || '';
+		const userFriendlyCommand = fullCommandText ? getCdPresentationOverrides(fullCommandText, isPowershell, workingDirectory)?.commandLine : undefined;
+		const command = userFriendlyCommand ?? fullCommandText;
 		return {
 			tool: ToolName.CoreTerminalConfirmationTool,
 			input: {
-				message: permissionRequest.intention || permissionRequest.fullCommandText || codeBlock(permissionRequest),
-				command: permissionRequest.fullCommandText as string | undefined,
+				message: permissionRequest.intention || command || codeBlock(permissionRequest),
+				command,
 				isBackground: false
 			}
 		};
@@ -194,7 +201,7 @@ export async function getConfirmationToolParams(instaService: IInstantiationServ
 	return {
 		tool: ToolName.CoreConfirmationTool,
 		input: {
-			title: 'Background Agent Permission Request',
+			title: 'Copilot CLI Permission Request',
 			message: codeBlock(permissionRequest),
 			confirmationType: 'basic'
 		}
@@ -211,4 +218,4 @@ function codeBlock(obj: Record<string, unknown>): string {
 /**
  * A permission request which will be used to check tool or path usage against config and/or request user approval.
  */
-export declare type PermissionRequest = Parameters<NonNullable<SessionOptions['requestPermission']>>[0];
+export declare type PermissionRequest = PermissionRequestedEvent['data']['permissionRequest'];

@@ -4,16 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { RequestType } from '@vscode/copilot-api';
+import * as l10n from '@vscode/l10n';
 import { Result } from '../../../util/common/result';
 import { createServiceIdentifier } from '../../../util/common/services';
 import { CallTracker } from '../../../util/common/telemetryCorrelationId';
 import { generateUuid } from '../../../util/vs/base/common/uuid';
 import { IInstantiationService } from '../../../util/vs/platform/instantiation/common/instantiation';
 import { IAuthenticationService } from '../../authentication/common/authentication';
-import { getGithubMetadataHeaders } from '../../chunking/common/chunkingEndpointClientImpl';
 import { ConfigKey, IConfigurationService } from '../../configuration/common/configurationService';
 import { EmbeddingType } from '../../embeddings/common/embeddingsComputer';
 import { IEnvService } from '../../env/common/envService';
+import { getGithubMetadataHeaders } from '../../github/common/githubApiFetcherService';
 import { ILogService } from '../../log/common/logService';
 import { Response } from '../../networking/common/fetcherService';
 import { getRequest } from '../../networking/common/networking';
@@ -99,7 +100,9 @@ export class GithubAvailableEmbeddingTypesService implements IGithubAvailableEmb
 				return initialResult;
 			}
 
-			const permissiveSession = await this._authService.getGitHubSession('permissive', { silent, createIfNone: !silent ? true : undefined });
+			const permissiveSession = silent
+				? await this._authService.getGitHubSession('permissive', { silent })
+				: await this._authService.getGitHubSession('permissive', { createIfNone: { detail: l10n.t('Sign in to GitHub with additional permissions to use workspace embeddings.') } });
 			if (!permissiveSession) {
 				return initialResult;
 			}

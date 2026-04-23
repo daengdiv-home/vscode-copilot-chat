@@ -18,6 +18,7 @@ import { IEndpointProvider } from '../../../../platform/endpoint/common/endpoint
 import { ChatEndpoint } from '../../../../platform/endpoint/node/chatEndpoint';
 import { Proxy4oEndpoint } from '../../../../platform/endpoint/node/proxy4oEndpoint';
 import { ProxyInstantApplyShortEndpoint } from '../../../../platform/endpoint/node/proxyInstantApplyShortEndpoint';
+import { IOctoKitService } from '../../../../platform/github/common/githubService';
 import { ILogService } from '../../../../platform/log/common/logService';
 import { IEditLogService } from '../../../../platform/multiFileEdit/common/editLogService';
 import { IMultiFileEditInternalTelemetryService } from '../../../../platform/multiFileEdit/common/multiFileEditQualityTelemetry';
@@ -122,14 +123,6 @@ function emitCodeLine(line: string, uri: Uri, existingDocument: TextDocumentSnap
 		const addedText = currentLineIndex === 0 ? line : `\n` + line;
 		outputStream.textEdit(uri, [TextEdit.replace(new Range(currentLineIndex, 0, currentLineIndex, 0), addedText)]);
 	}
-}
-
-export async function processFullRewrite(uri: Uri, document: TextDocumentSnapshot | undefined, newContent: string, outputStream: MappedEditsResponseStream, token: CancellationToken, pushedLines: string[]): Promise<void> {
-	for (const line of newContent.split(/\r?\n/)) {
-		emitCodeLine(line, uri, document, outputStream, pushedLines, token);
-	}
-
-	await handleTrailingLines(uri, document, outputStream, pushedLines, token);
 }
 
 async function processFullRewriteStream(uri: Uri, existingDocument: TextDocumentSnapshot | undefined, inputStream: AsyncIterable<LineOfText>, outputStream: MappedEditsResponseStream, token: CancellationToken, pushedLines: string[] = []) {
@@ -306,6 +299,7 @@ export class CodeMapper {
 		@IMultiFileEditInternalTelemetryService private readonly multiFileEditInternalTelemetryService: IMultiFileEditInternalTelemetryService,
 		@IAlternativeNotebookContentEditGenerator private readonly alternativeNotebookEditGenerator: IAlternativeNotebookContentEditGenerator,
 		@IAuthenticationService private readonly authenticationService: IAuthenticationService,
+		@IOctoKitService private readonly octoKitService: IOctoKitService,
 		@INotebookService private readonly notebookService: INotebookService,
 		@IConfigurationService configurationService: IConfigurationService,
 	) {
@@ -329,8 +323,8 @@ export class CodeMapper {
 			return fastEdit;
 		}
 		// continue with "slow rewrite endpoint" when fast rewriting was not possible
-		// use gpt-4.1 as fallback
-		const chatEndpoint = await this.endpointProvider.getChatEndpoint('gpt-4.1');
+		// use copilot base as fallback
+		const chatEndpoint = await this.endpointProvider.getChatEndpoint('copilot-base');
 
 		// Only attempt a full file rewrite if the original document fits into 3/4 of the max output token limit, leaving space for the model to add code. The limit is currently a flat 4K tokens from CAPI across all our models.
 		// If there are multiple input documents, pick the longest one to base the limit on
@@ -396,7 +390,8 @@ export class CodeMapper {
 			if (fetchResult.type === ChatFetchResponseType.Canceled) {
 				return undefined;
 			}
-			const errorDetails = getErrorDetailsFromChatFetchError(fetchResult, (await this.authenticationService.getCopilotToken()).copilotPlan);
+			const outageStatus = await this.octoKitService.getGitHubOutageStatus();
+			const errorDetails = getErrorDetailsFromChatFetchError(fetchResult, (await this.authenticationService.getCopilotToken()).copilotPlan, outageStatus);
 			result = createOutcome([{ label: errorDetails.message, message: `request ${fetchResult.type}`, severity: 'error' }], errorDetails);
 		}
 		if (result.annotations.length || result.errorDetails) {

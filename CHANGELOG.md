@@ -1,3 +1,101 @@
+# GitHub Copilot Chat in VS Code - Changelog
+
+You can find the latest AI-related updates for GitHub Copilot in VS Code in the weekly [VS Code release notes](https://code.visualstudio.com/updates).
+
+For more frequent updates, check the [Commit log](https://github.com/Microsoft/vscode/commits/main) and [vscode-copilot-chat commit log](https://github.com/microsoft/vscode-copilot-chat/commits/main) on GitHub.
+
+---
+
+# Past updates
+
+## 0.41 (2026-03-25)
+
+GitHub Copilot updates for [VS Code 1.113](https://code.visualstudio.com/updates/v1_113):
+
+- MCP support in Copilot CLI & Claude agents
+- Forking sessions in Copilot CLI & Claude agents
+- Agent debug logs for Copilot CLI and Claude CLI sessions (Preview)
+- Claude session listing powered by SDK APIs
+- Nested subagents
+- Manage plugin marketplaces
+- URL handlers for plugin installation
+- Chat Customizations editor (Preview)
+- Configurable thinking effort in model picker
+- Images preview for chat attachments
+
+## 0.40 (2026-03-18)
+
+GitHub Copilot updates for [VS Code 1.112](https://code.visualstudio.com/updates/v1_112):
+
+- Message steering and queueing in Copilot CLI
+- Preview changes before delegating to Copilot CLI
+- Clickable file links in Copilot CLI terminal output
+- Permissions levels in Copilot CLI
+- Troubleshoot agent behavior with /troubleshoot (Preview)
+- Export and import agent debug logs (Preview)
+- Image and binary file support for agents
+- Automatic symbol references on paste in chat
+- Customizations discovery in parent repositories
+- Sandbox locally running MCP servers (Linux and macOS)
+- Improved UI for MCP Elicitation
+- Enable or disable plugins and MCP servers
+- Automatic plugin updates
+
+
+## 0.39 (2026-03-09)
+
+GitHub Copilot updates for [VS Code 1.111](https://code.visualstudio.com/updates/v1_111):
+
+- Autopilot and agent permissions
+- Agent-scoped hooks (Preview)
+- Debug events snapshot
+- Chat tip improvements
+- AI CLI profile group in terminal dropdown (Experimental)
+
+## 0.38 (2026-03-05)
+
+GitHub Copilot updates from [February 2026](https://code.visualstudio.com/updates/v1_110):
+
+### Agent controls
+
+- **Background agent slash commands** — Chat customization options like prompt files, hooks, and skills are now available in background agent sessions as slash commands. Background agent sessions can also be renamed.
+- **Claude agent improvements** — Steering and queuing, session renaming, context window rendering with compaction, new slash commands (`/compact`, `/agents`, `/hooks`), `getDiagnostics` tool, and performance improvements for reading sessions.
+- **Agent Debug panel (Preview)** — New panel showing chat events in real time, including system prompts, tool calls, and customization events. Includes a chart view for visual event hierarchy. Open via **Developer: Open Agent Debug Panel** or the gear icon in the Chat view.
+- **Auto approve slash commands** — Toggle global auto approve directly from chat input with `/autoApprove` and `/disableAutoApprove` (aliases: `/yolo`, `/disableYolo`).
+- **Edit mode hidden by default** — Agent mode now handles everything edit mode can do; edit mode is hidden from the agent picker by default, controlled by the `chat.editMode.hidden` setting. Ask mode is now backed by a custom agent definition.
+- **Ask questions tool improvements** — The `askQuestions` tool moved into VS Code core for improved reliability. You can now send steering messages without dismissing pending questions first.
+- **Prevent auto-suspend during chat** — VS Code asks the OS not to suspend the machine while a chat request is running.
+
+### Agent extensibility
+
+- **Agent plugins (Experimental)** — Prepackaged bundles of chat customizations (skills, commands, agents, MCP servers, hooks) installable from the Extensions view. Configurable plugin marketplaces and local plugin directories.
+- **Agentic browser tools (Experimental)** — Agents can read and interact with the integrated browser using tools like `openBrowserPage`, `readPage`, `screenshotPage`, `clickElement`, `typeInPage`, and `runPlaywrightCode`. Enable by setting `workbench.browser.enableChatTools` to `true`.
+- **Create agent customizations from chat** — New `/create-prompt`, `/create-instruction`, `/create-skill`, `/create-agent`, and `/create-hook` slash commands to generate customization files directly from a conversation.
+- **Tools for usages and rename** — New `vscode_renameSymbol` tool and updated `usages` tool let agents navigate and refactor code using extension/LSP capabilities with high precision.
+
+### Smarter sessions
+
+- **Session memory for plans** — Plans persist to session memory and stay available across conversation turns, surviving compaction.
+- **Explore subagent for codebase search** — The Plan agent delegates codebase research to a dedicated read-only Explore subagent running on fast models. Configurable via the `chat.exploreAgent.defaultModel` setting.
+- **Inline chat and chat session integration** — When an agent session already changed a file, inline chat queues new messages into that session instead of making changes in isolation.
+
+### Chat experience
+
+- **Redesigned model picker** — New dropdown with Auto, featured/recently used, and other models sections, plus a search box and rich hover details.
+- **Contextual tips (Experimental)** — Tips in the Chat view help discover features tailored to your usage patterns, controlled by the `chat.tips.enabled` setting.
+- **Custom thinking phrases** — Customize loading text during reasoning/tool calls via the `chat.agent.thinking.phrases` setting.
+- **Collapsible terminal tool calls** — Terminal tool invocations displayed as collapsible sections to reduce visual noise, controlled by the `chat.tools.terminal.simpleCollapsible` setting.
+- **OS notifications for chat** — Configure notifications for chat responses and confirmations to appear even when the window is in focus (`always` option).
+- **Inline chat hover mode** — New hover-based UI for inline chat (set `inlineChat.renderMode` to `hover`).
+- **Inline chat affordance** — Selection-triggered affordance for starting inline chat in the editor or gutter, controlled by the `inlineChat.affordance` setting.
+
+### Code editing
+
+- **Long-distance next edit suggestions** — NES now predicts and suggests edits anywhere in the file, not just near the cursor.
+- **NES eagerness** — New eagerness option in the Copilot Status Bar to control suggestion frequency vs. relevance.
+
+---
+
 ## 0.37 (2026-02-04)
 
 GitHub Copilot updates from [January 2026](https://code.visualstudio.com/updates/v1_109):
