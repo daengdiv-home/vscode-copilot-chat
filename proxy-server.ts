@@ -18,6 +18,8 @@
  *
  *  Anthropic Endpoints:
  *    POST /v1/messages            - Anthropic Messages API (100% compatible)
+ *                                   Supports: thinking, adaptive thinking, tool use,
+ *                                   context management, advanced tool use
  *
  *  Common:
  *    POST /v1/responses           - Responses API (pass-through)
@@ -77,7 +79,7 @@ app.get('/health', (_req: Request, res: ExpressResponse) => {
 	res.json({
 		status: 'ok',
 		service: 'copilot-openai-anthropic-proxy',
-		version: '1.3.0',
+		version: '1.4.0',
 		uptime_seconds: Math.floor((Date.now() - serverStats.startedAt) / 1000),
 		total_requests: serverStats.totalRequests,
 		active_requests: serverStats.activeRequests,
@@ -163,7 +165,7 @@ async function main() {
 	}
 
 	app.listen(PORT, () => {
-		console.log(`\n🚀 Copilot OpenAI + Anthropic Proxy v1.3.0 running on http://localhost:${PORT}`);
+		console.log(`\n🚀 Copilot OpenAI + Anthropic Proxy v1.4.0 running on http://localhost:${PORT}`);
 		console.log(`\nOpenAI-Compatible Endpoints:`);
 		console.log(`  GET  http://localhost:${PORT}/v1/models`);
 		console.log(`  POST http://localhost:${PORT}/v1/chat/completions`);

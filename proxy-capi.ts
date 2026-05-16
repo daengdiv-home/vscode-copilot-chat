@@ -25,7 +25,30 @@ const packageJson: { name: string; version: string; engines: { vscode: string } 
 const EDITOR_NAME = 'vscode';
 const EDITOR_VERSION = packageJson.engines.vscode.replace(/^[^0-9]*/, ''); // strip leading ^ or ~
 const PLUGIN_NAME = packageJson.name;       // "copilot-chat"
-const PLUGIN_VERSION = packageJson.version;  // e.g. "0.38.0"
+const PLUGIN_VERSION = packageJson.version;  // e.g. "0.44.0"
+
+/**
+ * Persistent session-level identifiers.
+ * Real VS Code uses vscode.env.sessionId (per-session) and vscode.env.machineId (per-machine).
+ * We generate them once at startup and reuse across all requests, just like the real extension.
+ * @see src/platform/env/vscode/envServiceImpl.ts
+ */
+const PERSISTENT_SESSION_ID = generateSessionId();
+const PERSISTENT_MACHINE_ID = generateSessionId();
+
+/** Generate a stable UUID. Called once at module load. */
+function generateSessionId(): string {
+	// Use crypto.randomUUID if available (Node 19+), otherwise fallback
+	try {
+		return require('crypto').randomUUID();
+	} catch {
+		return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+			const r = Math.random() * 16 | 0;
+			const v = c === 'x' ? r : (r & 0x3 | 0x8);
+			return v.toString(16);
+		});
+	}
+}
 
 /**
  * Model API response type - mirrors IModelAPIResponse from the extension.
@@ -33,6 +56,7 @@ const PLUGIN_VERSION = packageJson.version;  // e.g. "0.38.0"
  */
 export interface ModelAPIResponse {
 	id: string;
+	vendor: string;
 	name: string;
 	model_picker_enabled: boolean;
 	preview?: boolean;
@@ -54,6 +78,7 @@ export interface ModelAPIResponse {
 			vision?: { max_prompt_images?: number };
 		};
 		supports?: {
+			parallel_tool_calls?: boolean;
 			tool_calls?: boolean;
 			streaming?: boolean;
 			vision?: boolean;
@@ -62,6 +87,7 @@ export interface ModelAPIResponse {
 			adaptive_thinking?: boolean;
 			max_thinking_budget?: number;
 			min_thinking_budget?: number;
+			reasoning_effort?: string[];
 		};
 	};
 	supported_endpoints?: string[];
@@ -77,10 +103,12 @@ function generateUuid(): string {
 	});
 }
 
-/** Standard headers for CAPI requests
+/** Standard headers for CAPI requests.
+ * Mirrors the exact headers real VS Code sends.
  * @see src/platform/networking/common/networking.ts - networkRequest headers
- * @see src/platform/networking/node/nodeFetcher.ts - User-Agent
+ * @see src/platform/networking/node/nodeFetcher.ts - User-Agent, X-VSCode-User-Agent-Library-Version
  * @see src/platform/env/common/envService.ts - getEditorVersionHeaders
+ * @see src/extension/prompt/node/chatMLFetcher.ts - X-Interaction-Id, X-Initiator
  */
 function getCapiHeaders(copilotToken: string, requestId: string): Record<string, string> {
 	return {
@@ -89,14 +117,18 @@ function getCapiHeaders(copilotToken: string, requestId: string): Record<string,
 		'Accept': 'application/json',
 		'X-Request-Id': requestId,
 		'X-GitHub-Api-Version': '2025-05-01',
-		'VScode-SessionId': generateUuid(),
-		'VScode-MachineId': generateUuid(),
+		// Editor identification headers (same as real VS Code)
 		'Editor-Version': `${EDITOR_NAME}/${EDITOR_VERSION}`,
 		'Editor-Plugin-Version': `${PLUGIN_NAME}/${PLUGIN_VERSION}`,
-		'Copilot-Integration-Id': 'vscode-chat',
-		'OpenAI-Intent': 'conversation-panel',
+		// Real VS Code uses node-fetch internally
 		'User-Agent': `GitHubCopilotChat/${PLUGIN_VERSION}`,
-		'X-Initiator': 'agent',
+		'X-VSCode-User-Agent-Library-Version': 'node-fetch',
+		// Request routing & tracking (mirrors networkRequest in networking.ts)
+		'OpenAI-Intent': 'conversation-panel',
+		'X-Interaction-Type': 'conversation-panel',
+		'X-Agent-Task-Id': requestId,
+		'X-Interaction-Id': generateUuid(),
+		'X-Initiator': 'user',
 	};
 }
 
@@ -135,10 +167,11 @@ export function toOpenAIModel(model: ModelAPIResponse) {
 		id: model.id,
 		object: 'model' as const,
 		created: Math.floor(Date.now() / 1000),
-		owned_by: model.custom_model ? `${model.custom_model.owner_name}` : 'github-copilot',
+		owned_by: model.custom_model ? `${model.custom_model.owner_name}` : model.vendor || 'github-copilot',
 		// Extra metadata
 		name: model.name,
 		version: model.version,
+		supported_endpoints: model.supported_endpoints,
 		capabilities: {
 			type: model.capabilities.type,
 			family: model.capabilities.family,
@@ -146,6 +179,8 @@ export function toOpenAIModel(model: ModelAPIResponse) {
 			adaptive_thinking: model.capabilities.supports?.adaptive_thinking,
 			max_thinking_budget: model.capabilities.supports?.max_thinking_budget,
 			min_thinking_budget: model.capabilities.supports?.min_thinking_budget,
+			reasoning_effort: model.capabilities.supports?.reasoning_effort,
+			parallel_tool_calls: model.capabilities.supports?.parallel_tool_calls,
 		},
 	};
 }
@@ -193,6 +228,11 @@ export interface OpenAIChatCompletionRequest {
 	// @see src/platform/endpoint/node/chatEndpoint.ts - customizeCapiBody()
 	reasoning_effort?: 'low' | 'medium' | 'high';
 	thinking_budget?: number;
+	// Anthropic-native thinking config (pass-through)
+	thinking?: {
+		type: 'enabled' | 'disabled' | 'adaptive';
+		budget_tokens?: number;
+	};
 }
 
 /** OpenAI-compatible embedding request */
@@ -234,7 +274,13 @@ export function buildCapiChatBody(request: OpenAIChatCompletionRequest): Record<
 	// Thinking/reasoning budget for Claude/Anthropic models
 	// Maps OpenAI reasoning_effort to CAPI thinking_budget
 	// @see src/platform/endpoint/node/chatEndpoint.ts - _getThinkingBudget(), customizeCapiBody()
-	if (request.thinking_budget !== undefined) {
+	if (request.thinking?.type === 'adaptive') {
+		// Anthropic adaptive thinking: pass through directly
+		body.thinking = { type: 'adaptive' };
+	} else if (request.thinking?.type === 'enabled' && request.thinking.budget_tokens) {
+		// Anthropic thinking config pass-through
+		body.thinking_budget = Math.max(1024, request.thinking.budget_tokens);
+	} else if (request.thinking_budget !== undefined) {
 		// Direct thinking_budget pass-through (takes priority)
 		body.thinking_budget = Math.max(1024, request.thinking_budget);
 	} else if (request.reasoning_effort) {
@@ -282,7 +328,6 @@ export async function streamChatCompletion(
 	const requestId = generateUuid();
 	const headers = getCapiHeaders(copilotToken, requestId);
 	headers['Accept'] = 'text/event-stream';
-	headers['X-Interaction-Type'] = 'conversation-panel';
 
 	const response = await fetch(`${capiUrl}/chat/completions`, {
 		method: 'POST',
@@ -305,7 +350,6 @@ export async function fetchChatCompletion(
 ): Promise<any> {
 	const requestId = generateUuid();
 	const headers = getCapiHeaders(copilotToken, requestId);
-	headers['X-Interaction-Type'] = 'conversation-panel';
 
 	body.stream = false;
 	delete body.stream_options;
@@ -427,7 +471,7 @@ export function buildMessagesApiBody(
 		messages,
 		max_tokens: Math.max(maxTokens, thinkingBudget + 1),
 		stream: request.stream ?? false,
-		thinking: { type: 'enabled', budget_tokens: thinkingBudget },
+		thinking: thinkingBudget > 0 ? { type: 'enabled', budget_tokens: thinkingBudget } : undefined,
 	};
 
 	if (system) { body.system = system; }
@@ -435,11 +479,21 @@ export function buildMessagesApiBody(
 	if (request.top_p !== undefined) { body.top_p = request.top_p; }
 	if (request.stop !== undefined) { body.stop_sequences = Array.isArray(request.stop) ? request.stop : [request.stop]; }
 	if (request.tools) {
-		body.tools = request.tools.map(t => ({
-			name: t.function.name,
-			description: t.function.description,
-			input_schema: t.function.parameters ?? { type: 'object', properties: {} },
-		}));
+		body.tools = request.tools.map(t => {
+			const { $schema: _, ...params } = (t.function.parameters || {}) as Record<string, unknown>;
+			return {
+				name: t.function.name,
+				description: t.function.description,
+				input_schema: { type: 'object', properties: {}, ...params },
+			};
+		});
+	}
+	if (request.tool_choice) {
+		if (request.tool_choice === 'auto' || request.tool_choice === 'none') {
+			body.tool_choice = { type: request.tool_choice };
+		} else if (typeof request.tool_choice === 'object' && request.tool_choice.type === 'function') {
+			body.tool_choice = { type: 'tool', name: request.tool_choice.function.name };
+		}
 	}
 
 	return body;
@@ -460,9 +514,14 @@ export async function fetchMessagesApi(
 	if (body.stream) {
 		headers['Accept'] = 'text/event-stream';
 	}
-	// Anthropic beta header for interleaved thinking
+	// Anthropic beta headers for thinking and advanced features
 	// @see src/platform/endpoint/node/chatEndpoint.ts - getExtraHeaders
-	headers['anthropic-beta'] = 'interleaved-thinking-2025-05-14';
+	// Only add interleaved-thinking for non-adaptive models
+	const betaFeatures: string[] = [];
+	if (body.thinking?.type !== 'adaptive') {
+		betaFeatures.push('interleaved-thinking-2025-05-14');
+	}
+	headers['anthropic-beta'] = betaFeatures.join(',');
 
 	const response = await fetch(`${capiUrl}/v1/messages`, {
 		method: 'POST',
@@ -501,30 +560,36 @@ export async function fetchMessagesApiNative(
 		'Accept': isStream ? 'text/event-stream' : 'application/json',
 		'X-Request-Id': requestId,
 		'X-GitHub-Api-Version': '2025-05-01',
-		'VScode-SessionId': generateUuid(),
-		'VScode-MachineId': generateUuid(),
-		'Editor-Version': 'vscode/1.100.0',
-		'Editor-Plugin-Version': 'copilot-chat/0.38.0',
-		'Copilot-Integration-Id': 'vscode-chat',
+		'Editor-Version': `${EDITOR_NAME}/${EDITOR_VERSION}`,
+		'Editor-Plugin-Version': `${PLUGIN_NAME}/${PLUGIN_VERSION}`,
+		'User-Agent': `GitHubCopilotChat/${PLUGIN_VERSION}`,
+		'X-VSCode-User-Agent-Library-Version': 'node-fetch',
 		'OpenAI-Intent': 'conversation-panel',
-		'User-Agent': 'GitHubCopilotChat/0.38.0',
-		'X-Initiator': 'agent',
+		'X-Interaction-Type': 'conversation-agent',
+		'X-Agent-Task-Id': requestId,
+		'X-Interaction-Id': generateUuid(),
+		'X-Initiator': 'user',
 	};
 
 	// NOTE: Do NOT forward anthropic-version header to CAPI.
 	// CAPI hangs/times out when this header is present. The Anthropic SDK
 	// always sends it, but CAPI handles versioning internally.
 
-	// Merge anthropic-beta: always include interleaved-thinking, plus any client betas
+	// Merge anthropic-beta: include interleaved-thinking for non-adaptive models, plus any client betas
 	const betaFeatures = new Set<string>();
-	betaFeatures.add('interleaved-thinking-2025-05-14');
+	// Only add interleaved-thinking if the request doesn't use adaptive thinking
+	if (body.thinking?.type !== 'adaptive') {
+		betaFeatures.add('interleaved-thinking-2025-05-14');
+	}
 	if (clientHeaders?.anthropicBeta) {
 		for (const beta of clientHeaders.anthropicBeta.split(',')) {
 			const trimmed = beta.trim();
 			if (trimmed) { betaFeatures.add(trimmed); }
 		}
 	}
-	headers['anthropic-beta'] = [...betaFeatures].join(',');
+	if (betaFeatures.size > 0) {
+		headers['anthropic-beta'] = [...betaFeatures].join(',');
+	}
 
 	const response = await fetch(`${capiUrl}/v1/messages`, {
 		method: 'POST',
@@ -685,7 +750,8 @@ export class MessagesStreamConverter {
 				const stopReason = data.delta?.stop_reason;
 				const finishReason = stopReason === 'end_turn' ? 'stop'
 					: stopReason === 'max_tokens' ? 'length'
-						: stopReason || null;
+						: stopReason === 'tool_use' ? 'tool_calls'
+							: stopReason || null;
 
 				const usageChunk: Record<string, any> = {
 					choices: [{

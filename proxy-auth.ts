@@ -10,6 +10,11 @@
 
 const GITHUB_TOKEN_URL = 'https://api.github.com/copilot_internal/v2/token';
 
+/** Package.json version info for dynamic headers */
+const packageJson: { name: string; version: string; engines: { vscode: string } } = require('./package.json');
+const EDITOR_VERSION = packageJson.engines.vscode.replace(/^[^0-9]*/, '');
+const PLUGIN_VERSION = packageJson.version;
+
 /** Raw token envelope from the /copilot_internal/v2/token endpoint */
 interface TokenEnvelope {
 	token: string;
@@ -110,9 +115,13 @@ export class CopilotTokenProvider {
 			headers: {
 				'Authorization': `token ${githubToken}`,
 				'Accept': 'application/json',
-				'Editor-Version': 'vscode/1.100.0',
-				'Editor-Plugin-Version': 'copilot-chat/0.38.0',
-				'User-Agent': 'GitHubCopilotChat/0.38.0',
+				// Token endpoint uses its own API version, same as real extension
+				// @see src/platform/authentication/node/copilotTokenManager.ts
+				'X-GitHub-Api-Version': '2025-04-01',
+				'Editor-Version': `vscode/${EDITOR_VERSION}`,
+				'Editor-Plugin-Version': `copilot-chat/${PLUGIN_VERSION}`,
+				'User-Agent': `GitHubCopilotChat/${PLUGIN_VERSION}`,
+				'X-VSCode-User-Agent-Library-Version': 'node-fetch',
 			}
 		});
 

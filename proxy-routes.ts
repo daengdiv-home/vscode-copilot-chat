@@ -25,6 +25,7 @@ import {
 	fetchChatCompletion,
 	fetchEmbeddings,
 	fetchMessagesApi,
+	fetchMessagesApiNative,
 	fetchModels,
 	isClaudeModel,
 	MessagesStreamConverter,
@@ -37,6 +38,10 @@ import type {
 	OpenAIChatCompletionRequest,
 	OpenAIEmbeddingRequest,
 } from './proxy-capi';
+
+const packageJson: { name: string; version: string; engines: { vscode: string } } = require('./package.json');
+const EDITOR_VERSION = packageJson.engines.vscode.replace(/^[^0-9]*/, '');
+const PLUGIN_VERSION = packageJson.version;
 
 export const proxyRouter = Router();
 const tokenProvider = CopilotTokenProvider.getInstance();
@@ -151,12 +156,13 @@ proxyRouter.post('/chat/completions', async (req: Request, res: ExpressResponse)
 
 		// Determine if we should route via Messages API
 		// CAPI's /chat/completions doesn't return thinking content or tool_calls for Claude,
-		// so for Claude models with thinking_budget or tools, we route through the
+		// so for Claude models with thinking/adaptive_thinking or tools, we route through the
 		// /v1/messages endpoint (Anthropic Messages API) and convert back to OpenAI format.
 		// @see src/platform/endpoint/node/chatEndpoint.ts - customizeCapiBody()
 		// @see src/platform/endpoint/node/messagesApi.ts - createMessagesRequestBody()
 		const thinkingBudget = capiBody.thinking_budget as number | undefined;
-		const claudeWithThinking = thinkingBudget && thinkingBudget > 0 && isClaudeModel(request.model);
+		const adaptiveThinking = capiBody.thinking?.type === 'adaptive';
+		const claudeWithThinking = (thinkingBudget && thinkingBudget > 0 || adaptiveThinking) && isClaudeModel(request.model);
 		const claudeWithTools = isClaudeModel(request.model) && request.tools && request.tools.length > 0;
 		const useMessagesApi = claudeWithThinking || claudeWithTools;
 
@@ -170,8 +176,12 @@ proxyRouter.post('/chat/completions', async (req: Request, res: ExpressResponse)
 				? buildMessagesApiBody(request, effectiveBudget)
 				: buildMessagesApiBody(request, 0);
 			messagesBody.stream = !!request.stream;
-			// If no thinking requested, remove the thinking key
-			if (effectiveBudget <= 0) {
+
+			if (adaptiveThinking) {
+				// Adaptive thinking: let the model decide its own thinking budget
+				messagesBody.thinking = { type: 'adaptive' };
+			} else if (effectiveBudget <= 0) {
+				// If no thinking requested, remove the thinking key
 				delete messagesBody.thinking;
 			}
 
@@ -399,11 +409,15 @@ proxyRouter.post('/responses', async (req: Request, res: ExpressResponse) => {
 			'Accept': req.body.stream ? 'text/event-stream' : 'application/json',
 			'X-Request-Id': requestId,
 			'X-GitHub-Api-Version': '2025-05-01',
-			'Editor-Version': 'vscode/1.100.0',
-			'Editor-Plugin-Version': 'copilot-chat/0.38.0',
-			'Copilot-Integration-Id': 'vscode-chat',
+			'Editor-Version': `vscode/${EDITOR_VERSION}`,
+			'Editor-Plugin-Version': `copilot-chat/${PLUGIN_VERSION}`,
+			'User-Agent': `GitHubCopilotChat/${PLUGIN_VERSION}`,
+			'X-VSCode-User-Agent-Library-Version': 'node-fetch',
 			'OpenAI-Intent': 'conversation-panel',
-			'X-Initiator': 'agent',
+			'X-Interaction-Type': 'conversation-agent',
+			'X-Agent-Task-Id': requestId,
+			'X-Interaction-Id': generateUuid(),
+			'X-Initiator': 'user',
 		};
 
 		const capiResponse = await fetch(`${capiUrl}/responses`, {
@@ -458,9 +472,12 @@ proxyRouter.post('/responses', async (req: Request, res: ExpressResponse) => {
  *  Supports all Anthropic features:
  *    - Streaming and non-streaming responses
  *    - Extended thinking (interleaved-thinking-2025-05-14)
+ *    - Adaptive thinking for supported models
  *    - Tool use (tool_choice, auto, any, specific tool)
  *    - System messages (string or content blocks)
  *    - Prompt caching (anthropic-beta: prompt-caching-2024-07-31)
+ *    - Context management (anthropic-beta: context-management-2025-06-27)
+ *    - Advanced tool use (anthropic-beta: advanced-tool-use-2025-11-20)
  *    - All Claude models available via Copilot
  *
  *  @see src/platform/endpoint/node/messagesApi.ts
@@ -499,12 +516,21 @@ proxyRouter.post('/messages', async (req: Request, res: ExpressResponse) => {
 				body.max_tokens = budget + 1;
 			}
 		}
+		// Adaptive thinking doesn't require max_tokens adjustment
 
 		// --- Make request to CAPI ---
-		const capiResponse = await fetchMessagesApi(
+		const abortController = new AbortController();
+		req.on('close', () => abortController.abort());
+
+		const capiResponse = await fetchMessagesApiNative(
 			capiUrl,
 			token,
 			body,
+			{
+				anthropicVersion: req.headers['anthropic-version'] as string | undefined,
+				anthropicBeta: req.headers['anthropic-beta'] as string | undefined,
+			},
+			abortController.signal,
 		);
 
 		// --- Error handling (Anthropic format) ---
