@@ -30,7 +30,7 @@ jobs:
 
       - name: Package Extension
         # Chạy lệnh build file vsix
-        run: npm run package
+        run: vsce package
 
       - name: Upload VSIX Artifact
         uses: actions/upload-artifact@v4
