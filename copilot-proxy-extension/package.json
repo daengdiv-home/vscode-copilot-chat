@@ -1,0 +1,59 @@
+{
+	"name": "copilot-proxy",
+	"displayName": "Copilot Proxy Server",
+	"description": "Exposes GitHub Copilot as an OpenAI-compatible local API proxy",
+	"version": "1.0.0",
+	"publisher": "local",
+	"engines": {
+		"vscode": "^1.90.0"
+	},
+	"categories": ["Other"],
+	"activationEvents": ["onStartupFinished"],
+	"main": "./dist/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "copilot-proxy.start",
+				"title": "Start Copilot Proxy Server",
+				"category": "Copilot Proxy"
+			},
+			{
+				"command": "copilot-proxy.stop",
+				"title": "Stop Copilot Proxy Server",
+				"category": "Copilot Proxy"
+			},
+			{
+				"command": "copilot-proxy.status",
+				"title": "Show Proxy Status",
+				"category": "Copilot Proxy"
+			}
+		],
+		"configuration": {
+			"title": "Copilot Proxy",
+			"properties": {
+				"copilot-proxy.port": {
+					"type": "number",
+					"default": 18080,
+					"description": "Port for the proxy server"
+				},
+				"copilot-proxy.autoStart": {
+					"type": "boolean",
+					"default": false,
+					"description": "Auto-start proxy on VS Code startup"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+		"watch": "npm run build -- --watch",
+		"package": "npx @vscode/vsce package --no-dependencies"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"@types/vscode": "^1.90.0",
+		"esbuild": "^0.20.0",
+		"@vscode/vsce": "^2.24.0",
+		"typescript": "^5.4.0"
+	}
+}
