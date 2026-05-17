@@ -22,12 +22,15 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install # Ưu tiên npm ci nếu có package-lock.json, nếu không thì dùng npm install
 
+      - name: Compile Extension # Thêm bước này nếu bạn cần build mã nguồn
+        run: npm run build    # Hoặc npm run build (xem mục "scripts" trong package.json)
+
       - name: Install VSCE
         run: npm install -g @vscode/vsce
 
       - name: Package Extension
         # Chạy lệnh build file vsix
-        run: vsce package 
+        run: npm run package
 
       - name: Upload VSIX Artifact
         uses: actions/upload-artifact@v4
