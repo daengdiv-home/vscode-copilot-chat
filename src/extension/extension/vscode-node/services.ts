@@ -52,6 +52,7 @@ import { ILanguageContextService } from '../../../platform/languageServer/common
 import { ICompletionsFetchService } from '../../../platform/nesFetch/common/completionsFetchService';
 import { CompletionsFetchService } from '../../../platform/nesFetch/node/completionsFetchServiceImpl';
 import { IFetcherService } from '../../../platform/networking/common/fetcherService';
+import { IToolDeferralService } from '../../../platform/networking/common/toolDeferralService';
 import { ChatWebSocketManager, IChatWebSocketManager } from '../../../platform/networking/node/chatWebSocketManager';
 import { FetcherService } from '../../../platform/networking/vscode-node/fetcherServiceImpl';
 import { resolveOTelConfig } from '../../../platform/otel/common/otelConfig';
@@ -134,10 +135,11 @@ import { IChatDiskSessionResources } from '../../prompts/common/chatDiskSessionR
 import { ChatDiskSessionResources } from '../../prompts/node/chatDiskSessionResourcesImpl';
 import { CodeMapperService, ICodeMapperService } from '../../prompts/node/codeMapper/codeMapperService';
 import { FixCookbookService, IFixCookbookService } from '../../prompts/node/inline/fixCookbookService';
+import { IProxyServerService } from '../../proxyServer/common/proxyServerService';
+import { ProxyServerServiceImpl } from '../../proxyServer/node/proxyServerService';
 import { WorkspaceMutationManager } from '../../testing/node/setupTestsFileManager';
 import { AgentMemoryService, IAgentMemoryService } from '../../tools/common/agentMemoryService';
 import { IMemoryCleanupService, MemoryCleanupService } from '../../tools/common/memoryCleanupService';
-import { IToolDeferralService } from '../../../platform/networking/common/toolDeferralService';
 import { ToolDeferralService } from '../../tools/common/toolDeferralService';
 import { IToolsService } from '../../tools/common/toolsService';
 import { ToolsService } from '../../tools/vscode-node/toolsService';
@@ -145,8 +147,6 @@ import { LanguageContextServiceImpl } from '../../typescriptContext/vscode-node/
 import { IWorkspaceListenerService } from '../../workspaceRecorder/common/workspaceListenerService';
 import { WorkspacListenerService } from '../../workspaceRecorder/vscode-node/workspaceListenerService';
 import { ISimilarFilesContextService } from '../../xtab/common/similarFilesContextService';
-import { IProxyServerService } from '../../proxyServer/common/proxyServerService';
-import { ProxyServerServiceImpl } from '../../proxyServer/node/proxyServerService';
 import { registerServices as registerCommonServices } from '../vscode/services';
 
 // ###########################################################################################

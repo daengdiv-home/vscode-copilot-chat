@@ -19,9 +19,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { commands, window, workspace } from 'vscode';
+import { ILogService } from '../../../platform/log/common/logService';
 import { Disposable } from '../../../util/vs/base/common/lifecycle';
 import { IExtensionContribution } from '../../common/contributions';
-import { ILogService } from '../../../platform/log/common/logService';
 import { IProxyServerService } from '../common/proxyServerService';
 
 const PROXY_ENABLED_KEY = 'github.copilot.chat.proxyServer.enabled';

@@ -22,15 +22,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as http from 'http';
-import { Disposable } from '../../../util/vs/base/common/lifecycle';
-import { Emitter, Event } from '../../../util/vs/base/common/event';
-import { generateUuid } from '../../../util/vs/base/common/uuid';
-import { IEnvService } from '../../../platform/env/common/envService';
-import { ICAPIClientService } from '../../../platform/endpoint/common/capiClient';
 import { ICopilotTokenManager } from '../../../platform/authentication/common/copilotTokenManager';
-import { IConfigurationService, ConfigKey } from '../../../platform/configuration/common/configurationService';
 import { IInteractionService } from '../../../platform/chat/common/interactionService';
+import { ConfigKey, IConfigurationService } from '../../../platform/configuration/common/configurationService';
+import { ICAPIClientService } from '../../../platform/endpoint/common/capiClient';
+import { IEnvService } from '../../../platform/env/common/envService';
 import { ILogService } from '../../../platform/log/common/logService';
+import { Emitter, Event } from '../../../util/vs/base/common/event';
+import { Disposable } from '../../../util/vs/base/common/lifecycle';
+import { generateUuid } from '../../../util/vs/base/common/uuid';
 import { IProxyServerService } from '../common/proxyServerService';
 
 /**

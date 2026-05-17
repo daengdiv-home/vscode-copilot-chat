@@ -38,11 +38,11 @@ import { NotebookFollowCommands } from '../../notebook/vscode-node/followActions
 import { CopilotDebugCommandContribution } from '../../onboardDebug/vscode-node/copilotDebugCommandContribution';
 import { OnboardTerminalTestsContribution } from '../../onboardDebug/vscode-node/onboardTerminalTestsContribution';
 import { OTelContrib } from '../../otel/vscode-node/otelContrib';
-import { ProxyServerContribution } from '../../proxyServer/node/proxyServer.contribution';
 import { PowerStateLogger } from '../../power/vscode-node/powerStateLogger';
 import { DebugCommandsContribution } from '../../prompt/vscode-node/debugCommands';
 import { RenameSuggestionsContrib } from '../../prompt/vscode-node/renameSuggestions';
 import { PromptFileContextContribution } from '../../promptFileContext/vscode-node/promptFileContextService';
+import { ProxyServerContribution } from '../../proxyServer/node/proxyServer.contribution';
 import { SearchPanelCommands } from '../../search/vscode-node/commands';
 import { SettingsSchemaFeature } from '../../settingsSchema/vscode-node/settingsSchemaFeature';
 import { SurveyCommandContribution } from '../../survey/vscode-node/surveyCommands';
