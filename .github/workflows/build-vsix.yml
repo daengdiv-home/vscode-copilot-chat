@@ -1,13 +1,19 @@
-name: Build VSIX Extension
+name: Build Copilot Proxy Extension
 
 on:
   push:
-    branches: [ "main", "master" ] # Tự động chạy khi có code mới đẩy lên nhánh main/master
-  workflow_dispatch: # Cho phép bạn bấm nút chạy thủ công trên GitHub
+    branches: [ "main", "master" ]
+    paths:
+      - 'copilot-proxy-extension/**'
+      - '.github/workflows/build-vsix.yml'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: copilot-proxy-extension
 
     steps:
       - name: Checkout code
@@ -16,25 +22,25 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24' # Bạn có thể đổi thành phiên bản Node.js bạn đang dùng (18, 20...)
-          cache: 'npm'       # Tối ưu thời gian chạy bằng cách cache lại npm
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: copilot-proxy-extension/package-lock.json
 
       - name: Install dependencies
-        run: npm ci || npm install # Ưu tiên npm ci nếu có package-lock.json, nếu không thì dùng npm install
+        run: npm ci
 
-      - name: Compile Extension # Thêm bước này nếu bạn cần build mã nguồn
-        run: npm run build    # Hoặc npm run build (xem mục "scripts" trong package.json)
+      - name: Build
+        run: npm run build
 
       - name: Install VSCE
         run: npm install -g @vscode/vsce
 
       - name: Package Extension
-        # Chạy lệnh build file vsix
-        run: vsce package --no-dependencies
+        run: vsce package --no-dependencies --allow-missing-repository
 
       - name: Upload VSIX Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: my-modified-extension
-          path: '*.vsix' # Tìm và tải lên tất cả các file có đuôi .vsix được sinh ra
-          retention-days: 7 # File sẽ được lưu trên GitHub trong 7 ngày
+          name: copilot-proxy-extension
+          path: copilot-proxy-extension/*.vsix
+          retention-days: 30
