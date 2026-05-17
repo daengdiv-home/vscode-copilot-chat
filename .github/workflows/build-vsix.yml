@@ -1,0 +1,37 @@
+name: Build VSIX Extension
+
+on:
+  push:
+    branches: [ "main", "master" ] # Tự động chạy khi có code mới đẩy lên nhánh main/master
+  workflow_dispatch: # Cho phép bạn bấm nút chạy thủ công trên GitHub
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24' # Bạn có thể đổi thành phiên bản Node.js bạn đang dùng (18, 20...)
+          cache: 'npm'       # Tối ưu thời gian chạy bằng cách cache lại npm
+
+      - name: Install dependencies
+        run: npm ci || npm install # Ưu tiên npm ci nếu có package-lock.json, nếu không thì dùng npm install
+
+      - name: Install VSCE
+        run: npm install -g @vscode/vsce
+
+      - name: Package Extension
+        # Chạy lệnh build file vsix
+        run: vsce package 
+
+      - name: Upload VSIX Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-modified-extension
+          path: '*.vsix' # Tìm và tải lên tất cả các file có đuôi .vsix được sinh ra
+          retention-days: 7 # File sẽ được lưu trên GitHub trong 7 ngày
