@@ -27,7 +27,9 @@ import {
 	fetchMessagesApi,
 	fetchMessagesApiNative,
 	fetchModels,
+	getCapiHeaders,
 	isClaudeModel,
+	messagesContainVision,
 	MessagesStreamConverter,
 	parseAnthropicSSE,
 	streamChatCompletion,
@@ -38,10 +40,6 @@ import type {
 	OpenAIChatCompletionRequest,
 	OpenAIEmbeddingRequest,
 } from './proxy-capi';
-
-const packageJson: { name: string; version: string; engines: { vscode: string } } = require('./package.json');
-const EDITOR_VERSION = packageJson.engines.vscode.replace(/^[^0-9]*/, '');
-const PLUGIN_VERSION = packageJson.version;
 
 export const proxyRouter = Router();
 const tokenProvider = CopilotTokenProvider.getInstance();
@@ -153,6 +151,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: ExpressResponse)
 		}
 
 		const capiBody = buildCapiChatBody(request);
+		const hasVision = messagesContainVision(request.messages);
 
 		// Determine if we should route via Messages API
 		// CAPI's /chat/completions doesn't return thinking content or tool_calls for Claude,
@@ -260,7 +259,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: ExpressResponse)
 
 		// Non-streaming response (regular, no thinking)
 		if (!request.stream) {
-			const result = await fetchChatCompletion(capiUrl, token, capiBody);
+			const result = await fetchChatCompletion(capiUrl, token, capiBody, hasVision);
 			// CAPI response is already in OpenAI format for non-streaming
 			return res.json(result);
 		}
@@ -268,7 +267,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: ExpressResponse)
 		// Streaming response - pipe CAPI SSE stream directly
 		// CAPI uses the same SSE format as OpenAI (data: {...}\n\ndata: [DONE]\n\n)
 		// @see src/platform/networking/node/stream.ts - processSSE()
-		const capiResponse = await streamChatCompletion(capiUrl, token, capiBody, abortController.signal);
+		const capiResponse = await streamChatCompletion(capiUrl, token, capiBody, abortController.signal, hasVision);
 
 		if (!capiResponse.ok) {
 			const errorText = await capiResponse.text().catch(() => '');
@@ -403,22 +402,11 @@ proxyRouter.post('/responses', async (req: Request, res: ExpressResponse) => {
 	try {
 		const { token, capiUrl } = await tokenProvider.resolveCapiAuth(req);
 		const requestId = generateUuid();
-		const headers: Record<string, string> = {
-			'Authorization': `Bearer ${token}`,
-			'Content-Type': 'application/json',
-			'Accept': req.body.stream ? 'text/event-stream' : 'application/json',
-			'X-Request-Id': requestId,
-			'X-GitHub-Api-Version': '2025-05-01',
-			'Editor-Version': `vscode/${EDITOR_VERSION}`,
-			'Editor-Plugin-Version': `copilot-chat/${PLUGIN_VERSION}`,
-			'User-Agent': `GitHubCopilotChat/${PLUGIN_VERSION}`,
-			'X-VSCode-User-Agent-Library-Version': 'node-fetch',
-			'OpenAI-Intent': 'conversation-panel',
-			'X-Interaction-Type': 'conversation-agent',
-			'X-Agent-Task-Id': requestId,
-			'X-Interaction-Id': generateUuid(),
-			'X-Initiator': 'user',
-		};
+		const headers = getCapiHeaders(token, requestId, {
+			intent: 'conversation-panel',
+			interactionType: 'conversation-agent',
+		});
+		headers['Accept'] = req.body.stream ? 'text/event-stream' : 'application/json';
 
 		const capiResponse = await fetch(`${capiUrl}/responses`, {
 			method: 'POST',

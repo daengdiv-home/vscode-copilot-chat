@@ -145,6 +145,8 @@ import { LanguageContextServiceImpl } from '../../typescriptContext/vscode-node/
 import { IWorkspaceListenerService } from '../../workspaceRecorder/common/workspaceListenerService';
 import { WorkspacListenerService } from '../../workspaceRecorder/vscode-node/workspaceListenerService';
 import { ISimilarFilesContextService } from '../../xtab/common/similarFilesContextService';
+import { IProxyServerService } from '../../proxyServer/common/proxyServerService';
+import { ProxyServerServiceImpl } from '../../proxyServer/node/proxyServerService';
 import { registerServices as registerCommonServices } from '../vscode/services';
 
 // ###########################################################################################
@@ -264,6 +266,9 @@ export function registerServices(builder: IInstantiationServiceBuilder, extensio
 	builder.define(ISimilarFilesContextService, new SyncDescriptor(SimilarFilesContextService));
 	builder.define(IGitHubOrgChatResourcesService, new SyncDescriptor(GitHubOrgChatResourcesService));
 	builder.define(IToolResultContentRenderer, new SyncDescriptor(ToolResultContentRenderer));
+
+	// Proxy server service — exposes Copilot API as OpenAI/Anthropic-compatible REST endpoints
+	builder.define(IProxyServerService, new SyncDescriptor(ProxyServerServiceImpl));
 
 	// OTel SQLite store — created lazily, DB file only appears when dbSpanExporter.enabled is true
 	const otelDbPath = extensionContext.globalStorageUri

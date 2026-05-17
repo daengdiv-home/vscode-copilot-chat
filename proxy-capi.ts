@@ -36,6 +36,13 @@ const PLUGIN_VERSION = packageJson.version;  // e.g. "0.44.0"
 const PERSISTENT_SESSION_ID = generateSessionId();
 const PERSISTENT_MACHINE_ID = generateSessionId();
 
+/**
+ * Persistent interaction ID — reused for all requests within a session.
+ * Real VS Code uses interactionService.interactionId which persists per conversation.
+ * @see src/extension/prompt/node/chatMLFetcher.ts - X-Interaction-Id
+ */
+const PERSISTENT_INTERACTION_ID = generateSessionId();
+
 /** Generate a stable UUID. Called once at module load. */
 function generateSessionId(): string {
 	// Use crypto.randomUUID if available (Node 19+), otherwise fallback
@@ -103,33 +110,68 @@ function generateUuid(): string {
 	});
 }
 
+/**
+ * Options for getCapiHeaders to support per-request customization.
+ */
+interface CapiHeaderOptions {
+	/** Whether this is a user-initiated request (default: true). Controls X-Initiator header. */
+	userInitiated?: boolean;
+	/** Override OpenAI-Intent (default: 'conversation-panel'). */
+	intent?: string;
+	/** Override X-Interaction-Type. Derived from intent if not provided. */
+	interactionType?: string;
+	/** Whether the request contains image content (adds Copilot-Vision-Request header). */
+	hasVision?: boolean;
+}
+
 /** Standard headers for CAPI requests.
  * Mirrors the exact headers real VS Code sends.
  * @see src/platform/networking/common/networking.ts - networkRequest headers
  * @see src/platform/networking/node/nodeFetcher.ts - User-Agent, X-VSCode-User-Agent-Library-Version
  * @see src/platform/env/common/envService.ts - getEditorVersionHeaders
  * @see src/extension/prompt/node/chatMLFetcher.ts - X-Interaction-Id, X-Initiator
+ * @see src/platform/endpoint/common/capiClient.ts - VScode-SessionId, VScode-MachineId
  */
-function getCapiHeaders(copilotToken: string, requestId: string): Record<string, string> {
-	return {
+export function getCapiHeaders(copilotToken: string, requestId: string, options?: CapiHeaderOptions): Record<string, string> {
+	const intent = options?.intent ?? 'conversation-panel';
+	const interactionType = options?.interactionType ?? intent;
+	const headers: Record<string, string> = {
 		'Authorization': `Bearer ${copilotToken}`,
 		'Content-Type': 'application/json',
 		'Accept': 'application/json',
 		'X-Request-Id': requestId,
 		'X-GitHub-Api-Version': '2025-05-01',
 		// Editor identification headers (same as real VS Code)
+		// @see src/platform/env/common/envService.ts - getEditorVersionHeaders
 		'Editor-Version': `${EDITOR_NAME}/${EDITOR_VERSION}`,
 		'Editor-Plugin-Version': `${PLUGIN_NAME}/${PLUGIN_VERSION}`,
 		// Real VS Code uses node-fetch internally
+		// @see src/platform/networking/node/nodeFetcher.ts
 		'User-Agent': `GitHubCopilotChat/${PLUGIN_VERSION}`,
 		'X-VSCode-User-Agent-Library-Version': 'node-fetch',
+		// Session & machine tracking (same as CAPIClient SDK)
+		// @see src/platform/endpoint/common/capiClient.ts - constructor
+		// @see src/extension/completions-core/vscode-node/lib/src/networking.ts
+		'VScode-SessionId': PERSISTENT_SESSION_ID,
+		'VScode-MachineId': PERSISTENT_MACHINE_ID,
 		// Request routing & tracking (mirrors networkRequest in networking.ts)
-		'OpenAI-Intent': 'conversation-panel',
-		'X-Interaction-Type': 'conversation-panel',
+		'OpenAI-Intent': intent,
+		'X-Interaction-Type': interactionType,
 		'X-Agent-Task-Id': requestId,
-		'X-Interaction-Id': generateUuid(),
-		'X-Initiator': 'user',
+		// Persistent per-session interaction ID (same as real extension)
+		// @see src/extension/prompt/node/chatMLFetcher.ts - X-Interaction-Id
+		'X-Interaction-Id': PERSISTENT_INTERACTION_ID,
+		// @see src/extension/prompt/node/chatMLFetcher.ts - X-Initiator
+		'X-Initiator': (options?.userInitiated ?? true) ? 'user' : 'agent',
 	};
+
+	// Copilot-Vision-Request header for requests with images
+	// @see src/extension/prompt/node/chatMLFetcher.ts lines 1345-1348
+	if (options?.hasVision) {
+		headers['Copilot-Vision-Request'] = 'true';
+	}
+
+	return headers;
 }
 
 /** Model metadata as returned by CAPI /models endpoint */
@@ -301,6 +343,16 @@ export function buildCapiChatBody(request: OpenAIChatCompletionRequest): Record<
 }
 
 /**
+ * Detect if messages contain image content (for Copilot-Vision-Request header).
+ * @see src/extension/prompt/node/chatMLFetcher.ts lines 1345-1348
+ */
+export function messagesContainVision(messages: OpenAIChatMessage[]): boolean {
+	return messages?.some(m =>
+		Array.isArray(m.content) && m.content.some(c => c.type === 'image_url' || 'image_url' in c)
+	) || false;
+}
+
+/**
  * Build CAPI embeddings request body from OpenAI-compatible request.
  * @see src/platform/networking/common/networking.ts - IEndpointBody
  */
@@ -324,9 +376,10 @@ export async function streamChatCompletion(
 	copilotToken: string,
 	body: Record<string, any>,
 	signal?: AbortSignal,
+	hasVision?: boolean,
 ): Promise<globalThis.Response> {
 	const requestId = generateUuid();
-	const headers = getCapiHeaders(copilotToken, requestId);
+	const headers = getCapiHeaders(copilotToken, requestId, { hasVision });
 	headers['Accept'] = 'text/event-stream';
 
 	const response = await fetch(`${capiUrl}/chat/completions`, {
@@ -347,9 +400,10 @@ export async function fetchChatCompletion(
 	capiUrl: string,
 	copilotToken: string,
 	body: Record<string, any>,
+	hasVision?: boolean,
 ): Promise<any> {
 	const requestId = generateUuid();
-	const headers = getCapiHeaders(copilotToken, requestId);
+	const headers = getCapiHeaders(copilotToken, requestId, { hasVision });
 
 	body.stream = false;
 	delete body.stream_options;
@@ -510,16 +564,21 @@ export async function fetchMessagesApi(
 	signal?: AbortSignal,
 ): Promise<globalThis.Response> {
 	const requestId = generateUuid();
-	const headers = getCapiHeaders(copilotToken, requestId);
+	const headers = getCapiHeaders(copilotToken, requestId, { intent: 'conversation-agent', interactionType: 'conversation-agent' });
 	if (body.stream) {
 		headers['Accept'] = 'text/event-stream';
 	}
 	// Anthropic beta headers for thinking and advanced features
 	// @see src/platform/endpoint/node/chatEndpoint.ts - getExtraHeaders
-	// Only add interleaved-thinking for non-adaptive models
 	const betaFeatures: string[] = [];
 	if (body.thinking?.type !== 'adaptive') {
 		betaFeatures.push('interleaved-thinking-2025-05-14');
+	}
+	// Context management and advanced tool use betas
+	// @see src/platform/endpoint/node/chatEndpoint.ts lines 269-276
+	betaFeatures.push('context-management-2025-06-27');
+	if (body.tools && body.tools.length > 0) {
+		betaFeatures.push('advanced-tool-use-2025-11-20');
 	}
 	headers['anthropic-beta'] = betaFeatures.join(',');
 
@@ -554,32 +613,27 @@ export async function fetchMessagesApiNative(
 	const requestId = generateUuid();
 	const isStream = body.stream ?? false;
 
-	const headers: Record<string, string> = {
-		'Authorization': `Bearer ${copilotToken}`,
-		'Content-Type': 'application/json',
-		'Accept': isStream ? 'text/event-stream' : 'application/json',
-		'X-Request-Id': requestId,
-		'X-GitHub-Api-Version': '2025-05-01',
-		'Editor-Version': `${EDITOR_NAME}/${EDITOR_VERSION}`,
-		'Editor-Plugin-Version': `${PLUGIN_NAME}/${PLUGIN_VERSION}`,
-		'User-Agent': `GitHubCopilotChat/${PLUGIN_VERSION}`,
-		'X-VSCode-User-Agent-Library-Version': 'node-fetch',
-		'OpenAI-Intent': 'conversation-panel',
-		'X-Interaction-Type': 'conversation-agent',
-		'X-Agent-Task-Id': requestId,
-		'X-Interaction-Id': generateUuid(),
-		'X-Initiator': 'user',
-	};
+	const headers = getCapiHeaders(copilotToken, requestId, {
+		intent: 'conversation-agent',
+		interactionType: 'conversation-agent',
+	});
+	headers['Accept'] = isStream ? 'text/event-stream' : 'application/json';
 
 	// NOTE: Do NOT forward anthropic-version header to CAPI.
 	// CAPI hangs/times out when this header is present. The Anthropic SDK
 	// always sends it, but CAPI handles versioning internally.
 
 	// Merge anthropic-beta: include interleaved-thinking for non-adaptive models, plus any client betas
+	// @see src/platform/endpoint/node/chatEndpoint.ts - getExtraHeaders
 	const betaFeatures = new Set<string>();
 	// Only add interleaved-thinking if the request doesn't use adaptive thinking
 	if (body.thinking?.type !== 'adaptive') {
 		betaFeatures.add('interleaved-thinking-2025-05-14');
+	}
+	// Context management and advanced tool use betas
+	betaFeatures.add('context-management-2025-06-27');
+	if (body.tools && body.tools.length > 0) {
+		betaFeatures.add('advanced-tool-use-2025-11-20');
 	}
 	if (clientHeaders?.anthropicBeta) {
 		for (const beta of clientHeaders.anthropicBeta.split(',')) {
